@@ -1,0 +1,165 @@
+=====================================================================
+ INPUT VIEWER - Installation et utilisation
+ Affiche touches, clics et molette dans une fenetre toujours visible
+ (utile pour Blender, tutoriels, captures d'ecran...)
+=====================================================================
+
+CONTENU DU DOSSIER
+------------------
+  input_viewer.py   Le programme
+  lancer.bat        Lanceur double-clic (Windows)
+  INSTALL.txt       Ce fichier
+
+
+---------------------------------------------------------------------
+ WINDOWS
+---------------------------------------------------------------------
+
+ETAPE 1 - Installer Python (une seule fois)
+  1. Aller sur https://www.python.org/downloads/
+  2. Telecharger la derniere version et lancer l'installeur.
+  3. IMPORTANT : cocher la case "Add python.exe to PATH" en bas de la
+     premiere fenetre, puis cliquer sur "Install Now".
+  4. Verifier : ouvrir un terminal (voir etape 2) et taper :
+         python --version
+     Un numero de version doit s'afficher (ex : Python 3.12.4).
+
+ETAPE 2 - Ouvrir un terminal dans le dossier du programme
+  Methode A (Windows 11) :
+     Ouvrir le dossier -> clic droit dans une zone vide
+     -> "Ouvrir dans le Terminal".
+  Methode B (Windows 10 / 11) :
+     Ouvrir le dossier -> cliquer dans la barre d'adresse en haut
+     -> taper  cmd  -> appuyer sur Entree.
+  Methode C (Windows 10) :
+     Maintenir Maj + clic droit dans une zone vide
+     -> "Ouvrir la fenetre PowerShell ici".
+
+ETAPE 3 - Installer la dependance (une seule fois)
+  Copier-coller dans le terminal, puis Entree :
+         python -m pip install pynput
+
+ETAPE 4 - Lancer le programme
+  Copier-coller dans le terminal, puis Entree :
+         python input_viewer.py
+
+RACCOURCI : une fois Python installe, un simple double-clic sur
+  lancer.bat  installe pynput si besoin et ouvre le programme.
+  (Pour fermer le programme : fermer sa fenetre.)
+
+Si "python" n'est pas reconnu, essayer a la place :
+         py -m pip install pynput
+         py input_viewer.py
+
+
+---------------------------------------------------------------------
+ MACOS
+---------------------------------------------------------------------
+  1. Installer Python 3 depuis https://www.python.org/downloads/
+  2. Ouvrir Terminal, aller dans le dossier :
+         cd chemin/vers/le/dossier
+     (astuce : taper "cd " puis glisser le dossier dans la fenetre)
+  3. Installer la dependance :
+         python3 -m pip install pynput
+  4. Lancer :
+         python3 input_viewer.py
+  5. AUTORISATIONS (obligatoire, sinon rien ne s'affiche) :
+     Reglages Systeme -> Confidentialite et securite
+       -> "Surveillance de l'entree" et "Accessibilite"
+     Ajouter / activer l'application Terminal (ou iTerm, VS Code...),
+     puis relancer le programme.
+
+
+---------------------------------------------------------------------
+ LINUX
+---------------------------------------------------------------------
+  1. Installer Python, tkinter et pip :
+         sudo apt install python3 python3-tk python3-pip
+  2. Dans le dossier du programme (clic droit -> "Ouvrir dans un
+     terminal") :
+         python3 -m pip install pynput
+         (si erreur "externally-managed-environment" :
+          python3 -m pip install --user --break-system-packages pynput
+          ou utiliser un venv)
+  3. Lancer :
+         python3 input_viewer.py
+  NOTE : fonctionne sous X11. Sous Wayland, la capture globale est
+  bloquee : choisir une session "X11 / Xorg" a l'ecran de connexion.
+
+
+---------------------------------------------------------------------
+ UTILISATION
+---------------------------------------------------------------------
+  - Grand texte orange : combinaison en cours (ex : Ctrl + Shift + G).
+  - Liste : historique des actions ; la derniere est surlignee en
+    orange, les anciennes s'estompent puis disparaissent.
+  - Boutons :
+      Epingle        Fenetre toujours au premier plan (on/off)
+      Effacer        Vide l'historique
+      Auto-effacement  Active/desactive la disparition automatique
+      Duree (s)      Delai avant disparition (1 a 20 secondes)
+      Opacite        Transparence de la fenetre
+  - Pour Blender : placer la fenetre sur un coin de l'ecran ; elle
+    reste visible meme quand Blender a le focus. Blender doit etre en
+    fenetre ou en plein ecran sans bordure (pas en plein ecran
+    exclusif).
+
+
+---------------------------------------------------------------------
+ PROBLEMES FREQUENTS
+---------------------------------------------------------------------
+  "python n'est pas reconnu..."
+     -> Python n'est pas dans le PATH. Reinstaller Python en cochant
+        "Add python.exe to PATH", ou utiliser  py  a la place de
+        python.
+
+  "No module named pynput"
+     -> Refaire l'etape d'installation : python -m pip install pynput
+
+  "No module named tkinter" (Linux)
+     -> sudo apt install python3-tk
+
+  Rien ne s'affiche quand je tape (macOS)
+     -> Voir les autorisations ci-dessus.
+
+  Rien ne s'affiche dans un programme lance "en administrateur"
+     (Windows) -> lancer aussi Input Viewer en administrateur
+        (clic droit sur le terminal -> "Executer en tant
+        qu'administrateur", puis relancer le programme).
+
+  La fenetre passe derriere Blender
+     -> Verifier que le bouton "Epingle" est actif et que Blender
+        n'est pas en plein ecran exclusif.
+
+
+---------------------------------------------------------------------
+ OPTIONNEL : CREER UN .EXE (sans avoir besoin de Python ensuite)
+---------------------------------------------------------------------
+  Dans le terminal, dans le dossier du programme :
+         python -m pip install pyinstaller
+         python -m PyInstaller --onefile --noconsole input_viewer.py
+  Le fichier se trouve ensuite dans le sous-dossier  dist\
+
+@echo off
+cd /d "%~dp0"
+
+where python >nul 2>&1
+if errorlevel 1 (
+    echo Python n'est pas installe ou pas dans le PATH.
+    echo Voir INSTALL.txt, etape 1.
+    pause
+    exit /b 1
+)
+
+python -c "import pynput" >nul 2>&1
+if errorlevel 1 (
+    echo Installation de pynput...
+    python -m pip install pynput
+    if errorlevel 1 (
+        echo Echec de l'installation de pynput.
+        pause
+        exit /b 1
+    )
+)
+
+start "" pythonw input_viewer.py
