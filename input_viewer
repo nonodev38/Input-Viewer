@@ -1,0 +1,239 @@
+"""
+Input Viewer : affiche touches, clics et molette de façon globale,
+dans une fenêtre toujours au premier plan (utile pour Blender, OBS, tutos...).
+
+Installation :  pip install pynput
+Lancement    :  python input_viewer.py
+"""
+import queue
+import sys
+import time
+import tkinter as tk
+
+from pynput import keyboard, mouse
+
+WIN = sys.platform.startswith("win")
+q = queue.Queue()
+
+MODS = {
+    "ctrl": "Ctrl", "ctrl_l": "Ctrl", "ctrl_r": "Ctrl",
+    "shift": "Shift", "shift_l": "Shift", "shift_r": "Shift",
+    "alt": "Alt", "alt_l": "Alt", "alt_r": "Alt", "alt_gr": "Alt",
+    "cmd": "Cmd", "cmd_l": "Cmd", "cmd_r": "Cmd",
+}
+ORDER = ["Ctrl", "Alt", "Shift", "Cmd"]
+NUMPAD_WIN = {106: "*", 107: "+", 109: "-", 110: ".", 111: "/"}
+BUTTONS = {"left": "Clic gauche", "right": "Clic droit", "middle": "Clic molette"}
+
+
+def key_name(k):
+    """Retourne (nom_affiché, modificateur_ou_None)."""
+    if isinstance(k, keyboard.Key):
+        if k.name in MODS:
+            return MODS[k.name], MODS[k.name]
+        return k.name.replace("_", " ").capitalize(), None
+    vk = getattr(k, "vk", None)
+    if vk is not None:
+        if WIN:
+            if 96 <= vk <= 105:
+                return f"Num {vk - 96}", None
+            if vk in NUMPAD_WIN:
+                return f"Num {NUMPAD_WIN[vk]}", None
+            if 65 <= vk <= 90 or 48 <= vk <= 57:
+                return chr(vk), None
+        elif 0xFFB0 <= vk <= 0xFFB9:  # keypad X11
+            return f"Num {vk - 0xFFB0}", None
+    ch = getattr(k, "char", None)
+    if ch and ch.isprintable():
+        return ch.upper(), None
+    return f"VK{vk}", None
+
+
+# --- Listeners (threads pynput) : on ne fait que poster dans la queue ---
+def on_press(k):
+    q.put(("kp", *key_name(k)))
+
+def on_release(k):
+    q.put(("kr", *key_name(k)))
+
+def on_click(x, y, button, pressed):
+    if pressed:
+        q.put(("click", BUTTONS.get(button.name, button.name)))
+
+def on_scroll(x, y, dx, dy):
+    if dy:
+        q.put(("scroll", "up" if dy > 0 else "down"))
+
+
+class App:
+    BG, FG, ACCENT = "#1e1e1e", "#e6e6e6", "#e87d0d"  # orange Blender
+    LIST_BG = "#2a2a2a"
+
+    def __init__(self, root):
+        self.root = root
+        root.title("Input Viewer")
+        root.geometry("360x440+40+40")
+        root.configure(bg=self.BG)
+        root.attributes("-topmost", True)
+        self.topmost = True
+
+        self.held_mods = set()
+        self.pressed = set()
+        self.scroll_count = 0
+        self.entries = []          # plus récent en premier : {"text","t","key"}
+        self.last_t = 0.0
+        self.auto_clear = tk.BooleanVar(value=True)
+        self.duration = tk.IntVar(value=4)
+
+        self.current = tk.Label(root, text="—", font=("Segoe UI", 20, "bold"),
+                                fg=self.ACCENT, bg=self.BG, wraplength=340, height=2)
+        self.current.pack(fill="x", padx=8, pady=(8, 0))
+
+        self.hist = tk.Listbox(root, font=("Consolas", 12), bg=self.LIST_BG, fg=self.FG,
+                               bd=0, highlightthickness=0, selectbackground=self.LIST_BG,
+                               activestyle="none")
+        self.hist.pack(fill="both", expand=True, padx=8, pady=8)
+
+        bar1 = tk.Frame(root, bg=self.BG)
+        bar1.pack(fill="x", padx=8, pady=(0, 4))
+        self.pin_btn = tk.Button(bar1, text="📌 Épinglé", command=self.toggle_pin,
+                                 bg="#3a3a3a", fg=self.FG, bd=0, padx=8)
+        self.pin_btn.pack(side="left")
+        tk.Button(bar1, text="Effacer", command=self.clear_all,
+                  bg="#3a3a3a", fg=self.FG, bd=0, padx=8).pack(side="left", padx=6)
+        tk.Checkbutton(bar1, text="Auto-effacement", variable=self.auto_clear,
+                       bg=self.BG, fg=self.FG, selectcolor="#3a3a3a",
+                       activebackground=self.BG, activeforeground=self.FG
+                       ).pack(side="left", padx=6)
+
+        bar2 = tk.Frame(root, bg=self.BG)
+        bar2.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Label(bar2, text="Durée (s)", bg=self.BG, fg=self.FG).pack(side="left")
+        tk.Scale(bar2, from_=1, to=20, orient="horizontal", variable=self.duration,
+                 bg=self.BG, fg=self.FG, highlightthickness=0, length=90
+                 ).pack(side="left", padx=(2, 10))
+        tk.Label(bar2, text="Opacité", bg=self.BG, fg=self.FG).pack(side="left")
+        s = tk.Scale(bar2, from_=30, to=100, orient="horizontal", showvalue=False,
+                     bg=self.BG, highlightthickness=0, length=80,
+                     command=lambda v: root.attributes("-alpha", int(v) / 100))
+        s.set(100)
+        s.pack(side="left", padx=2)
+
+        self.poll()
+        self.tick()
+
+    # --- utilitaires ---
+    def toggle_pin(self):
+        self.topmost = not self.topmost
+        self.root.attributes("-topmost", self.topmost)
+        self.pin_btn.config(text="📌 Épinglé" if self.topmost else "Non épinglé")
+
+    def clear_all(self):
+        self.entries.clear()
+        self.refresh()
+
+    def mods_prefix(self):
+        return [m for m in ORDER if m in self.held_mods]
+
+    @staticmethod
+    def blend(c1, c2, r):
+        r = max(0.0, min(1.0, r))
+        a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * r) for i in range(3))
+
+    def log(self, text, key=None):
+        now = time.time()
+        self.last_t = now
+        if key is not None and self.entries and self.entries[0]["key"] == key:
+            self.entries[0].update(text=text, t=now)
+        else:
+            self.entries.insert(0, {"text": text, "t": now, "key": key})
+            del self.entries[60:]
+        self.refresh()
+
+    def refresh(self):
+        """Reconstruit la liste : dernière action en surbrillance, anciennes en fondu."""
+        now = time.time()
+        dur = self.duration.get()
+        if self.auto_clear.get():
+            self.entries = [e for e in self.entries if now - e["t"] <= dur]
+        self.hist.delete(0, "end")
+        for i, e in enumerate(self.entries):
+            self.hist.insert("end", e["text"])
+            if i == 0:
+                self.hist.itemconfig(0, bg=self.ACCENT, fg="#111111",
+                                     selectbackground=self.ACCENT, selectforeground="#111111")
+            else:
+                r = ((now - e["t"]) / dur) ** 2 if self.auto_clear.get() else 0
+                col = self.blend(self.FG, self.LIST_BG, r * 0.85)
+                self.hist.itemconfig(i, fg=col, selectforeground=col)
+
+    def show_current(self, extra=None):
+        parts = self.mods_prefix() + ([extra] if extra else [])
+        self.current.config(text=" + ".join(parts) if parts else "—")
+
+    # --- gestion des événements ---
+    def handle(self, ev):
+        kind = ev[0]
+        if kind == "kp":
+            _, name, mod = ev
+            self.last_t = time.time()
+            if mod:
+                self.held_mods.add(mod)
+                self.show_current()
+                return
+            if name in self.pressed:  # auto-repeat ignoré
+                return
+            self.pressed.add(name)
+            self.show_current(name)
+            self.log("⌨  " + " + ".join(self.mods_prefix() + [name]))
+        elif kind == "kr":
+            _, name, mod = ev
+            if mod:
+                self.held_mods.discard(mod)
+            else:
+                self.pressed.discard(name)
+            self.show_current()
+        elif kind == "click":
+            self.show_current(ev[1])
+            self.log("🖱  " + " + ".join(self.mods_prefix() + [ev[1]]))
+        elif kind == "scroll":
+            d = ev[1]
+            arrow = "▲" if d == "up" else "▼"
+            key = (d, tuple(self.mods_prefix()))
+            if self.entries and self.entries[0]["key"] == key:
+                self.scroll_count += 1
+            else:
+                self.scroll_count = 1
+            label = " + ".join(self.mods_prefix() + [f"Molette {arrow}"])
+            if self.scroll_count > 1:
+                label += f"  ×{self.scroll_count}"
+            self.show_current(f"Molette {arrow}")
+            self.log("🖱  " + label, key=key)
+
+    def poll(self):
+        try:
+            while True:
+                self.handle(q.get_nowait())
+        except queue.Empty:
+            pass
+        self.root.after(15, self.poll)
+
+    def tick(self):
+        """Expiration + fondu, toutes les 100 ms."""
+        self.refresh()
+        if (self.auto_clear.get() and not self.held_mods and not self.pressed
+                and time.time() - self.last_t > self.duration.get()):
+            self.current.config(text="—")
+        self.root.after(100, self.tick)
+
+
+if __name__ == "__main__":
+    kl = keyboard.Listener(on_press=on_press, on_release=on_release)
+    ml = mouse.Listener(on_click=on_click, on_scroll=on_scroll)
+    kl.start()
+    ml.start()
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
